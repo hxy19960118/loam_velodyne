@@ -253,23 +253,27 @@ void LaserMapping::reset()
 
 bool LaserMapping::hasNewData()
 {
-   return _newLaserCloudCornerLast && _newLaserCloudSurfLast &&
-      _newLaserCloudFullRes && _newLaserOdometry &&
-      fabs((_timeLaserCloudCornerLast - _timeLaserOdometry).toSec()) < 0.005 &&
-      fabs((_timeLaserCloudSurfLast - _timeLaserOdometry).toSec()) < 0.005 &&
-      fabs((_timeLaserCloudFullRes - _timeLaserOdometry).toSec()) < 0.005;
+      return _newLaserCloudCornerLast;
+//    return _newLaserCloudCornerLast && _newLaserCloudSurfLast &&
+//       _newLaserCloudFullRes && _newLaserOdometry &&
+//       fabs((_timeLaserCloudCornerLast - _timeLaserOdometry).toSec()) < 0.005 &&
+//       fabs((_timeLaserCloudSurfLast - _timeLaserOdometry).toSec()) < 0.005 &&
+//       fabs((_timeLaserCloudFullRes - _timeLaserOdometry).toSec()) < 0.005;
 }
 
 void LaserMapping::process()
 {
    if (!hasNewData())// waiting for new data to arrive...
+   {
       return;
+   }
 
    reset();// reset flags, etc.
 
    if (!BasicLaserMapping::process(fromROSTime(_timeLaserOdometry)))
+   {
       return;
-
+   }
    publishResult();
 }
 

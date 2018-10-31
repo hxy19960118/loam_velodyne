@@ -35,7 +35,10 @@
 #include "Twist.h"
 #include "CircularBuffer.h"
 #include "time_utils.h"
+#include <ros/ros.h>
 
+#include <math.h>
+#include <opencv/cv.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/filters/voxel_grid.h>
@@ -96,6 +99,7 @@ public:
 
    auto& downSizeFilterCorner() { return _downSizeFilterCorner; }
    auto& downSizeFilterSurf() { return _downSizeFilterSurf; }
+   auto& downSizeFilterMap() { return _downSizeFilterMap; }
 
    auto frameCount()    const { return _frameCount; }
    auto scanPeriod()    const { return _scanPeriod; }
@@ -175,8 +179,19 @@ private:
 
    CircularBuffer<IMUState2> _imuHistory;    ///< history of IMU states
 
+   cv::Mat matA0;
+  cv::Mat matB0;
+  cv::Mat matX0;
+
+  cv::Mat matA1;
+  cv::Mat matD1;
+  cv::Mat matV1;
+
+  cv::Mat matP;
+
    pcl::VoxelGrid<pcl::PointXYZI> _downSizeFilterCorner;   ///< voxel filter for down sizing corner clouds
    pcl::VoxelGrid<pcl::PointXYZI> _downSizeFilterSurf;     ///< voxel filter for down sizing surface clouds
+   pcl::VoxelGrid<pcl::PointXYZI> _downSizeFilterMap;     ///< voxel filter for down sizing surface clouds
 
    bool _downsizedMapCreated = false;
 };

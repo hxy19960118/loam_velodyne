@@ -595,7 +595,7 @@ void BasicLaserOdometry::process()
             Eigen::Matrix<float, 6, 1> matX2(matX);
             matX = matP * matX2;
          }
-
+// 
          _transform.rot_x = _transform.rot_x.rad() + matX(0, 0);
          _transform.rot_y = _transform.rot_y.rad() + matX(1, 0);
          _transform.rot_z = _transform.rot_z.rad() + matX(2, 0);

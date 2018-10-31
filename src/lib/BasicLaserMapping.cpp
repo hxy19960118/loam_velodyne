@@ -93,7 +93,16 @@ BasicLaserMapping::BasicLaserMapping(const float& scanPeriod, const size_t& maxI
       _laserCloudCornerDSArray[i].reset(new pcl::PointCloud<pcl::PointXYZI>());
       _laserCloudSurfDSArray[i].reset(new pcl::PointCloud<pcl::PointXYZI>());
    }
+   float a[5] = {-1,-1,-1,-1,-1}; 
+  matA0 = cv::Mat::zeros(5, 3, CV_32F);
+  matB0 = cv::Mat(5, 1, CV_32F,a);
+  matX0 = cv::Mat::zeros(3, 1, CV_32F);
 
+  matA1 = cv::Mat::zeros(3, 3, CV_32F);
+  matD1 = cv::Mat::zeros(1, 3, CV_32F);
+  matV1 = cv::Mat::zeros(3, 3, CV_32F);
+
+  matP = cv::Mat::zeros(6, 6, CV_32F);
    // setup down size filters
    _downSizeFilterCorner.setLeafSize(0.2, 0.2, 0.2);
    _downSizeFilterSurf.setLeafSize(0.4, 0.4, 0.4);
@@ -605,12 +614,13 @@ void BasicLaserMapping::updateOdometry(Twist const& twist)
 nanoflann::KdTreeFLANN<pcl::PointXYZI> kdtreeCornerFromMap;
 nanoflann::KdTreeFLANN<pcl::PointXYZI> kdtreeSurfFromMap;
 
+/*
 void BasicLaserMapping::optimizeTransformTobeMapped()
 {
    if (_laserCloudCornerFromMap->size() <= 10 || _laserCloudSurfFromMap->size() <= 100)
       return;
 
-   pcl::PointXYZI pointSel, pointOri, /*pointProj, */coeff;
+   pcl::PointXYZI pointSel, pointOri, coeff;
 
    std::vector<int> pointSearchInd(5, 0);
    std::vector<float> pointSearchSqDis(5, 0);
@@ -905,7 +915,312 @@ void BasicLaserMapping::optimizeTransformTobeMapped()
    }
 
    transformUpdate();
-}
+} */
 
+void BasicLaserMapping::optimizeTransformTobeMapped()
+{
+   if (_laserCloudCornerFromMap->size() <= 10 || _laserCloudSurfFromMap->size() <= 100)
+      return;
+
+   pcl::PointXYZI pointSel, pointOri, /*pointProj, */coeff;
+
+   std::vector<int> pointSearchInd(5, 0);
+   std::vector<float> pointSearchSqDis(5, 0);
+
+   kdtreeCornerFromMap.setInputCloud(_laserCloudCornerFromMap);
+   kdtreeSurfFromMap.setInputCloud(_laserCloudSurfFromMap);
+
+   bool isDegenerate = false;
+
+   size_t laserCloudCornerStackNum = _laserCloudCornerStackDS->size();
+   size_t laserCloudSurfStackNum = _laserCloudSurfStackDS->size();
+
+   for (size_t iterCount = 0; iterCount < _maxIterations; iterCount++)
+   {
+      _laserCloudOri.clear();
+      _coeffSel.clear();
+
+      for (int i = 0; i < laserCloudCornerStackNum; i++)
+      {
+         pointOri = _laserCloudCornerStackDS->points[i];
+         pointAssociateToMap(pointOri, pointSel);
+         kdtreeCornerFromMap.nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis);
+
+         if (pointSearchSqDis[4] < 1.0)
+         {
+                float cx = 0;
+                float cy = 0; 
+                float cz = 0;
+                for (int j = 0; j < 5; j++) {
+                  cx += _laserCloudCornerFromMap->points[pointSearchInd[j]].x;
+                  cy += _laserCloudCornerFromMap->points[pointSearchInd[j]].y;
+                  cz += _laserCloudCornerFromMap->points[pointSearchInd[j]].z;
+                }
+                cx /= 5;
+                cy /= 5; 
+                cz /= 5;
+
+                float a11 = 0;
+                float a12 = 0; 
+                float a13 = 0;
+                float a22 = 0;
+                float a23 = 0; 
+                float a33 = 0;
+                for (int j = 0; j < 5; j++) {
+                  float ax = _laserCloudCornerFromMap->points[pointSearchInd[j]].x - cx;
+                  float ay = _laserCloudCornerFromMap->points[pointSearchInd[j]].y - cy;
+                  float az = _laserCloudCornerFromMap->points[pointSearchInd[j]].z - cz;
+
+                  a11 += ax * ax;
+                  a12 += ax * ay;
+                  a13 += ax * az;
+                  a22 += ay * ay;
+                  a23 += ay * az;
+                  a33 += az * az;
+                }
+                a11 /= 5;
+                a12 /= 5; 
+                a13 /= 5;
+                a22 /= 5;
+                a23 /= 5; 
+                a33 /= 5;
+
+                matA1.at<float>(0, 0) = a11;
+                matA1.at<float>(0, 1) = a12;
+                matA1.at<float>(0, 2) = a13;
+                matA1.at<float>(1, 0) = a12;
+                matA1.at<float>(1, 1) = a22;
+                matA1.at<float>(1, 2) = a23;
+                matA1.at<float>(2, 0) = a13;
+                matA1.at<float>(2, 1) = a23;
+                matA1.at<float>(2, 2) = a33;
+
+                cv::eigen(matA1, matD1, matV1);
+
+                if (matD1.at<float>(0, 0) > 3 * matD1.at<float>(0, 1)) {
+
+                  float x0 = pointSel.x;
+                  float y0 = pointSel.y;
+                  float z0 = pointSel.z;
+                  float x1 = cx + 0.1 * matV1.at<float>(0, 0);
+                  float y1 = cy + 0.1 * matV1.at<float>(0, 1);
+                  float z1 = cz + 0.1 * matV1.at<float>(0, 2);
+                  float x2 = cx - 0.1 * matV1.at<float>(0, 0);
+                  float y2 = cy - 0.1 * matV1.at<float>(0, 1);
+                  float z2 = cz - 0.1 * matV1.at<float>(0, 2);
+
+                  float a012 = sqrt(((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1))
+                             * ((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1)) 
+                             + ((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1))
+                             * ((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1)) 
+                             + ((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))
+                             * ((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1)));
+
+                  float l12 = sqrt((x1 - x2)*(x1 - x2) + (y1 - y2)*(y1 - y2) + (z1 - z2)*(z1 - z2));
+
+                  float la = ((y1 - y2)*((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1)) 
+                           + (z1 - z2)*((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1))) / a012 / l12;
+
+                  float lb = -((x1 - x2)*((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1)) 
+                           - (z1 - z2)*((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))) / a012 / l12;
+
+                  float lc = -((x1 - x2)*((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1)) 
+                           + (y1 - y2)*((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))) / a012 / l12;
+
+                  float ld2 = a012 / l12;
+
+
+                  float s = 1 - 0.9 * fabs(ld2);
+
+                  coeff.x = s * la;
+                  coeff.y = s * lb;
+                  coeff.z = s * lc;
+                  coeff.intensity = s * ld2;
+
+               if (s > 0.1)
+               {
+                  _laserCloudOri.push_back(pointOri);
+                  _coeffSel.push_back(coeff);
+               }
+            }
+         }
+      }
+
+      for (int i = 0; i < laserCloudSurfStackNum; i++)
+      {
+         pointOri = _laserCloudSurfStackDS->points[i];
+         pointAssociateToMap(pointOri, pointSel);
+         kdtreeSurfFromMap.nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis);
+
+         if (pointSearchSqDis[4] < 1.0)
+         {
+            for (int j = 0; j < 5; j++)
+            {
+               matA0.at<float>(j, 0) = _laserCloudSurfFromMap->points[pointSearchInd[j]].x;
+               matA0.at<float>(j, 1) = _laserCloudSurfFromMap->points[pointSearchInd[j]].y;
+               matA0.at<float>(j, 2) = _laserCloudSurfFromMap->points[pointSearchInd[j]].z;
+            }
+                cv::solve(matA0, matB0, matX0, cv::DECOMP_QR);
+
+            float pa = matX0.at<float>(0, 0);
+            float pb = matX0.at<float>(1, 0);
+            float pc = matX0.at<float>(2, 0);
+            float pd = 1;
+
+            float ps = sqrt(pa * pa + pb * pb + pc * pc);
+            pa /= ps;
+            pb /= ps;
+            pc /= ps;
+            pd /= ps;
+
+            bool planeValid = true;
+            for (int j = 0; j < 5; j++)
+            {
+               if (fabs(pa * _laserCloudSurfFromMap->points[pointSearchInd[j]].x +
+                        pb * _laserCloudSurfFromMap->points[pointSearchInd[j]].y +
+                        pc * _laserCloudSurfFromMap->points[pointSearchInd[j]].z + pd) > 0.2)
+               {
+                  planeValid = false;
+                  break;
+               }
+            }
+
+            if (planeValid)
+            {
+               float pd2 = pa * pointSel.x + pb * pointSel.y + pc * pointSel.z + pd;
+
+               //                // TODO: Why writing to a variable that's never read? Maybe it should be used afterwards?
+               //                pointProj = pointSel;
+               //                pointProj.x -= pa * pd2;
+               //                pointProj.y -= pb * pd2;
+               //                pointProj.z -= pc * pd2;
+
+               float s = 1 - 0.9f * fabs(pd2) / sqrt(calcPointDistance(pointSel));
+
+               coeff.x = s * pa;
+               coeff.y = s * pb;
+               coeff.z = s * pc;
+               coeff.intensity = s * pd2;
+
+               if (s > 0.1)
+               {
+                  _laserCloudOri.push_back(pointOri);
+                  _coeffSel.push_back(coeff);
+               }
+            }
+         }
+      }
+
+      float srx = _transformTobeMapped.rot_x.sin();
+      float crx = _transformTobeMapped.rot_x.cos();
+      float sry = _transformTobeMapped.rot_y.sin();
+      float cry = _transformTobeMapped.rot_y.cos();
+      float srz = _transformTobeMapped.rot_z.sin();
+      float crz = _transformTobeMapped.rot_z.cos();
+
+      size_t laserCloudSelNum = _laserCloudOri.size();
+      if (laserCloudSelNum < 50)
+         continue;
+
+            cv::Mat matA(laserCloudSelNum, 6, CV_32F, cv::Scalar::all(0));
+            cv::Mat matAt(6, laserCloudSelNum, CV_32F, cv::Scalar::all(0));
+            cv::Mat matAtA(6, 6, CV_32F, cv::Scalar::all(0));
+            cv::Mat matB(laserCloudSelNum, 1, CV_32F, cv::Scalar::all(0));
+            cv::Mat matAtB(6, 1, CV_32F, cv::Scalar::all(0));
+            cv::Mat matX(6, 1, CV_32F, cv::Scalar::all(0));
+    //   Eigen::Matrix<float, Eigen::Dynamic, 6> matA(laserCloudSelNum, 6);
+    //   Eigen::Matrix<float, 6, Eigen::Dynamic> matAt(6, laserCloudSelNum);
+    //   Eigen::Matrix<float, 6, 6> matAtA;
+    //   Eigen::VectorXf matB(laserCloudSelNum);
+    //   Eigen::VectorXf matAtB;
+    //   Eigen::VectorXf matX;
+
+      for (int i = 0; i < laserCloudSelNum; i++)
+      {
+         pointOri = _laserCloudOri.points[i];
+         coeff = _coeffSel.points[i];
+
+         float arx = (crx*sry*srz*pointOri.x + crx * crz*sry*pointOri.y - srx * sry*pointOri.z) * coeff.x
+            + (-srx * srz*pointOri.x - crz * srx*pointOri.y - crx * pointOri.z) * coeff.y
+            + (crx*cry*srz*pointOri.x + crx * cry*crz*pointOri.y - cry * srx*pointOri.z) * coeff.z;
+
+         float ary = ((cry*srx*srz - crz * sry)*pointOri.x
+                      + (sry*srz + cry * crz*srx)*pointOri.y + crx * cry*pointOri.z) * coeff.x
+            + ((-cry * crz - srx * sry*srz)*pointOri.x
+               + (cry*srz - crz * srx*sry)*pointOri.y - crx * sry*pointOri.z) * coeff.z;
+
+         float arz = ((crz*srx*sry - cry * srz)*pointOri.x + (-cry * crz - srx * sry*srz)*pointOri.y)*coeff.x
+            + (crx*crz*pointOri.x - crx * srz*pointOri.y) * coeff.y
+            + ((sry*srz + cry * crz*srx)*pointOri.x + (crz*sry - cry * srx*srz)*pointOri.y)*coeff.z;
+
+              matA.at<float>(i, 0) = arx;
+              matA.at<float>(i, 1) = ary;
+              matA.at<float>(i, 2) = arz;
+              matA.at<float>(i, 3) = coeff.x;
+              matA.at<float>(i, 4) = coeff.y;
+              matA.at<float>(i, 5) = coeff.z;
+              matB.at<float>(i, 0) = -coeff.intensity;
+      }
+            cv::transpose(matA, matAt);
+            matAtA = matAt * matA;
+            matAtB = matAt * matB;
+            cv::solve(matAtA, matAtB, matX, cv::DECOMP_QR);
+
+
+      if (iterCount == 0)
+      {
+
+              cv::Mat matE(1, 6, CV_32F, cv::Scalar::all(0));
+              cv::Mat matV(6, 6, CV_32F, cv::Scalar::all(0));
+              cv::Mat matV2(6, 6, CV_32F, cv::Scalar::all(0));
+
+              cv::eigen(matAtA, matE, matV);
+              matV.copyTo(matV2);
+
+         matV2 = matV;
+
+         isDegenerate = false;
+         float eignThre[6] = { 100, 100, 100, 100, 100, 100 };
+         for (int i = 0; i < 6; i++)
+         {
+                if (matE.at<float>(0, i) < eignThre[i]) {
+                  for (int j = 0; j < 6; j++) {
+                    matV2.at<float>(i, j) = 0;
+                  }
+                  isDegenerate = true;
+                } else {
+                  break;
+                }
+              }
+              matP = matV.inv() * matV2;
+      }
+
+      if (isDegenerate)
+      {
+              cv::Mat matX2(6, 1, CV_32F, cv::Scalar::all(0));
+              matX.copyTo(matX2);
+              matX = matP * matX2;
+      }
+
+      _transformTobeMapped.rot_x += matX.at<float>(0, 0);
+      _transformTobeMapped.rot_y += matX.at<float>(1, 0);
+      _transformTobeMapped.rot_z += matX.at<float>(2, 0);
+      _transformTobeMapped.pos.x() += matX.at<float>(3, 0);
+      _transformTobeMapped.pos.y() += matX.at<float>(4, 0);
+      _transformTobeMapped.pos.z() += matX.at<float>(5, 0);
+
+      float deltaR = sqrt(pow(rad2deg(matX.at<float>(0, 0)), 2) +
+                          pow(rad2deg(matX.at<float>(1, 0)), 2) +
+                          pow(rad2deg(matX.at<float>(2, 0)), 2));
+      float deltaT = sqrt(pow(matX.at<float>(3, 0) * 100, 2) +
+                          pow(matX.at<float>(4, 0) * 100, 2) +
+                          pow(matX.at<float>(5, 0) * 100, 2));
+
+      if (deltaR < _deltaRAbort && deltaT < _deltaTAbort)
+         break;
+   }
+
+   transformUpdate();
+}
 
 } // end namespace loam
